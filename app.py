@@ -86,8 +86,8 @@ def chat():
             .message { margin: 10px 0; }
             .incoming { color: #000; }
             .outgoing { color: green; text-align: right; }
-            form { display: flex; margin-top: 20px; }
-            input[name=message] { flex: 1; padding: 10px; font-size: 16px; }
+            form { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+            input, select { padding: 10px; font-size: 16px; }
             button { padding: 10px 20px; }
             .newchat-form { margin-top: 20px; }
         </style>
@@ -121,6 +121,10 @@ def chat():
                 <form method="POST" action="/send">
                     <input type="hidden" name="to" value="{{ selected }}" />
                     <input name="message" placeholder="Your message" required />
+                    <select name="mode">
+                        <option value="text">Text Message</option>
+                        <option value="template">Send Template</option>
+                    </select>
                     <button type="submit">Send</button>
                 </form>
             {% else %}
@@ -145,6 +149,7 @@ def new_chat():
 def send_message():
     to = normalize_number(request.form.get("to"))
     message = request.form.get("message")
+    mode = request.form.get("mode")
     timestamp = datetime.datetime.now().isoformat()
 
     url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
@@ -153,18 +158,8 @@ def send_message():
         "Content-Type": "application/json"
     }
 
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "text",
-        "text": {"body": message}
-    }
-
-    response = requests.post(url, headers=headers, json=payload)
-
-    if response.status_code != 200:
-        print("Text message failed, falling back to template")
-        template_payload = {
+    if mode == "template":
+        payload = {
             "messaging_product": "whatsapp",
             "to": to,
             "type": "template",
@@ -173,9 +168,16 @@ def send_message():
                 "language": {"code": "en_US"}
             }
         }
-        response = requests.post(url, headers=headers, json=template_payload)
+    else:
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "text",
+            "text": {"body": message}
+        }
 
-    print("✅ Sent to", to, ":", message)
+    response = requests.post(url, headers=headers, json=payload)
+    print("Meta API response:", response.text)
 
     c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
               (to, message, "outgoing", timestamp))
@@ -188,6 +190,12 @@ def debug_senders():
     c.execute("SELECT DISTINCT sender FROM messages ORDER BY sender")
     rows = c.fetchall()
     return "<br>".join([f"{i+1}. {row[0]}" for i, row in enumerate(rows)])
+
+@app.route("/debug-messages")
+def debug_messages():
+    c.execute("SELECT * FROM messages ORDER BY id DESC")
+    rows = c.fetchall()
+    return "<pre>" + "\n".join([str(row) for row in rows]) + "</pre>"
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
