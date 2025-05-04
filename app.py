@@ -200,12 +200,15 @@ def send_message():
     mode = request.form.get("mode")
     timestamp = datetime.datetime.now().isoformat()
 
+    # Always fetch the latest token
+    token = get_token()
     url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
     headers = {
-        "Authorization": f"Bearer {get_token()}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
 
+    # Build payload
     if mode == "template":
         payload = {
             "messaging_product": "whatsapp",
@@ -224,36 +227,40 @@ def send_message():
             "text": {"body": message}
         }
 
+    # First attempt
     response = requests.post(url, headers=headers, json=payload)
+
+    # If token expired (OAuthException 190), refresh and retry once
+    if response.status_code == 400 and '"code":190' in response.text:
+        exch = requests.get(
+            f"https://graph.facebook.com/v19.0/oauth/access_token"
+            f"?grant_type=fb_exchange_token"
+            f"&client_id={os.environ['FB_APP_ID']}"
+            f"&client_secret={os.environ['FB_APP_SECRET']}"
+            f"&fb_exchange_token={token}"
+        ).json()
+        if "access_token" in exch:
+            with open("token.txt", "w") as f:
+                f.write(exch["access_token"])
+            token = exch["access_token"]
+            headers["Authorization"] = f"Bearer {token}"
+            response = requests.post(url, headers=headers, json=payload)
+
     print("Meta API response:", response.text)
 
-    c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
-              (to, message, "outgoing", timestamp))
+    # Store outgoing in DB
+    c.execute(
+        "INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
+        (to, message, "outgoing", timestamp)
+    )
     conn.commit()
 
     return redirect(url_for("chat", contact=to))
 
-@app.route("/messages")
-def get_messages():
-    contact = normalize_number(request.args.get("contact", ""))
-    if not contact:
-        return jsonify([])
-    c.execute("SELECT sender, message, direction, timestamp FROM messages WHERE sender=? ORDER BY id ASC", (contact,))
-    rows = c.fetchall()
-    return jsonify([{"from": r[0], "text": r[1], "direction": r[2], "timestamp": r[3]} for r in rows])
-
-@app.route("/debug-senders")
-def debug_senders():
-    c.execute("SELECT DISTINCT sender FROM messages ORDER BY sender")
-    rows = c.fetchall()
-    return "<br>".join([f"{i+1}. {row[0]}" for i, row in enumerate(rows)])
-
-@app.route("/debug-messages")
-def debug_messages():
-    c.execute("SELECT * FROM messages ORDER BY id DESC")
-    rows = c.fetchall()
-    return "<pre>" + "\n".join([str(row) for row in rows]) + "</pre>"
+# preserve the rest of the file
 
 if __name__ == "__main__":
+    threading.Thread(target=refresh_token_every_45_days, daemon=True).start()
+    app.run(debug=True, port=5000) == "__main__":
     threading.Thread(target=refresh_token_every_45_days, daemon=True).start()
     app.run(debug=True, port=5000)
