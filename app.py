@@ -3,16 +3,41 @@ import sqlite3
 import requests
 import datetime
 import re
+import json
+import os
+import threading
+import time
 
 app = Flask(__name__)
 
-# Replace with your actual token and number
-ACCESS_TOKEN = "EAAJdUdTsbTMBOzgkdZB734ptYZB93AlL9ZAZAgEqZAUF3LVuIxvNgk9T4n2ex0uIwoVt0Bzl6NM2Cmz148GWOMiceKrvU7sAhGB3eonDSZA1NvPBHAZB1Y7ZBWZCnDATQHyi5cfRvWDWFPuO4ZBMSeDRsWo54st2CIf3FkZBUhHB03UBs8n9B9aAxpAiykzlzU2IzdHFGTCKcSucNNkDlsh0lB4V9BPdQK4NVrFQZAF6HNrUD4SAdRJZAOokZD"
+def get_token():
+    try:
+        with open("token.txt", "r") as f:
+            return f.read().strip()
+    except:
+        return os.environ.get("FB_SHORT_TOKEN")
+
+ACCESS_TOKEN = get_token()
 PHONE_NUMBER_ID = "653311211196519"
 VERIFY_TOKEN = "your_custom_verify_token"
 
-def normalize_number(number):
-    return re.sub(r'\D', '', number)
+# Refresh token every 45 days
+
+def refresh_token_every_45_days():
+    while True:
+        try:
+            url = f"https://graph.facebook.com/v19.0/oauth/access_token?grant_type=fb_exchange_token&client_id={os.environ['FB_APP_ID']}&client_secret={os.environ['FB_APP_SECRET']}&fb_exchange_token={os.environ['FB_SHORT_TOKEN']}"
+            response = requests.get(url)
+            data = response.json()
+            if 'access_token' in data:
+                with open("token.txt", "w") as f:
+                    f.write(data["access_token"])
+                print("🔁 Refreshed access token.")
+            else:
+                print("❌ Failed to refresh token:", data)
+        except Exception as e:
+            print("❌ Exception during token refresh:", str(e))
+        time.sleep(45 * 24 * 60 * 60)
 
 conn = sqlite3.connect("messages.db", check_same_thread=False)
 c = conn.cursor()
@@ -64,6 +89,9 @@ def webhook():
             print("❌ Error in processing webhook message:", str(e))
 
         return "OK", 200
+
+def normalize_number(number):
+    return re.sub(r'\D', '', number)
 
 @app.route("/chat")
 def chat():
@@ -158,7 +186,7 @@ def send_message():
 
     url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
     headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Authorization": f"Bearer {get_token()}",
         "Content-Type": "application/json"
     }
 
@@ -202,5 +230,5 @@ def debug_messages():
     return "<pre>" + "\n".join([str(row) for row in rows]) + "</pre>"
 
 if __name__ == "__main__":
+    threading.Thread(target=refresh_token_every_45_days, daemon=True).start()
     app.run(debug=True, port=5000)
-
