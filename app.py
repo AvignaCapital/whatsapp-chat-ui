@@ -261,6 +261,4 @@ def send_message():
 
 if __name__ == "__main__":
     threading.Thread(target=refresh_token_every_45_days, daemon=True).start()
-    app.run(debug=True, port=5000) == "__main__":
-    threading.Thread(target=refresh_token_every_45_days, daemon=True).start()
     app.run(debug=True, port=5000)
