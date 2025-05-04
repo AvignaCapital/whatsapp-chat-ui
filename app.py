@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string, redirect, url_for
+from flask import Flask, request, render_template_string, redirect, url_for, jsonify
 import sqlite3
 import requests
 import datetime
@@ -84,10 +84,14 @@ def webhook():
                 else:
                     print("⚠️ Message missing sender or text. Not inserted.")
             else:
-                print("⚠️ No 'messages' in incoming payload.")
+                print("⚠️ No messages key in webhook payload.")
         except Exception as e:
-            print("❌ Exception in webhook handler:", str(e))
+            print("❌ Error in processing webhook message:", str(e))
+
         return "OK", 200
+
+def normalize_number(number):
+    return re.sub(r'\D', '', number)
 
 @app.route("/chat")
 def chat():
@@ -109,7 +113,7 @@ def chat():
         <style>
             body { font-family: Arial; display: flex; height: 100vh; margin: 0; }
             .sidebar { width: 30%; background: #f1f1f1; padding: 20px; overflow-y: auto; border-right: 1px solid #ccc; }
-            .content { width: 70%; padding: 20px; overflow-y: auto; }
+            .content { width: 70%; padding: 20px; }
             .contact { padding: 10px; border-bottom: 1px solid #ddd; }
             .message { margin: 10px 0; }
             .incoming { color: #000; }
@@ -155,30 +159,79 @@ def chat():
                     </select>
                     <button type="submit">Send</button>
                 </form>
-                <script>
-                    async function pollMessages() {
-                        const res = await fetch(`/messages?contact={{ selected }}`);
-                        const data = await res.json();
-                        const box = document.getElementById("chatbox");
-                        box.innerHTML = "";
-                        data.forEach(msg => {
-                            const div = document.createElement("div");
-                            div.className = `message ${msg.direction}`;
-                            div.innerHTML = `<strong>${msg.direction === 'outgoing' ? 'You' : msg.from}:</strong> ${msg.text}<br><small>${msg.timestamp}</small>`;
-                            box.appendChild(div);
-                        });
-                        box.scrollTop = box.scrollHeight;
-                    }
-                    setInterval(pollMessages, 3000);
-                </script>
             {% else %}
                 <p>No conversation selected</p>
             {% endif %}
         </div>
+        <script>
+        async function pollMessages() {
+            const res = await fetch(`/messages?contact={{ selected }}`);
+            const data = await res.json();
+            const box = document.getElementById("chatbox");
+            box.innerHTML = "";
+            data.forEach(m => {
+                const div = document.createElement("div");
+                div.className = `message ${m.direction}`;
+                div.innerHTML = `<strong>${m.direction === 'outgoing' ? 'You' : m.from}:</strong> ${m.text}<br><small>${m.timestamp}</small>`;
+                box.appendChild(div);
+            });
+            box.scrollTop = box.scrollHeight;
+        }
+        setInterval(pollMessages, 3000);
+        </script>
     </body>
     </html>
     """
     return render_template_string(chat_template, contacts=contacts, selected=selected, messages=messages)
+
+@app.route("/new", methods=["POST"])
+def new_chat():
+    number = normalize_number(request.form.get("new_number"))
+    timestamp = datetime.datetime.now().isoformat()
+    c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
+              (number, "", "outgoing", timestamp))
+    conn.commit()
+    return redirect(url_for("chat", contact=number))
+
+@app.route("/send", methods=["POST"])
+def send_message():
+    to = normalize_number(request.form.get("to"))
+    message = request.form.get("message")
+    mode = request.form.get("mode")
+    timestamp = datetime.datetime.now().isoformat()
+
+    url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {get_token()}",
+        "Content-Type": "application/json"
+    }
+
+    if mode == "template":
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "template",
+            "template": {
+                "name": "hello_world",
+                "language": {"code": "en_US"}
+            }
+        }
+    else:
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "text",
+            "text": {"body": message}
+        }
+
+    response = requests.post(url, headers=headers, json=payload)
+    print("Meta API response:", response.text)
+
+    c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
+              (to, message, "outgoing", timestamp))
+    conn.commit()
+
+    return redirect(url_for("chat", contact=to))
 
 @app.route("/messages")
 def get_messages():
@@ -187,51 +240,20 @@ def get_messages():
         return jsonify([])
     c.execute("SELECT sender, message, direction, timestamp FROM messages WHERE sender=? ORDER BY id ASC", (contact,))
     rows = c.fetchall()
-    messages = [
-        {"from": r[0], "text": r[1], "direction": r[2], "timestamp": r[3]} for r in rows
-    ]
-    return jsonify(messages)
+    return jsonify([{"from": r[0], "text": r[1], "direction": r[2], "timestamp": r[3]} for r in rows])
 
-@app.route("/send", methods=["POST"])
-def send():
-    to = normalize_number(request.form.get("to"))
-    message = request.form.get("message")
-    mode = request.form.get("mode")
+@app.route("/debug-senders")
+def debug_senders():
+    c.execute("SELECT DISTINCT sender FROM messages ORDER BY sender")
+    rows = c.fetchall()
+    return "<br>".join([f"{i+1}. {row[0]}" for i, row in enumerate(rows)])
 
-    url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
+@app.route("/debug-messages")
+def debug_messages():
+    c.execute("SELECT * FROM messages ORDER BY id DESC")
+    rows = c.fetchall()
+    return "<pre>" + "\n".join([str(row) for row in rows]) + "</pre>"
 
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to
-    }
-
-    if mode == "text":
-        payload["type"] = "text"
-        payload["text"] = {"body": message}
-    elif mode == "template":
-        payload["type"] = "template"
-        payload["template"] = {"name": message, "language": {"code": "en_US"}}
-
-    response = requests.post(url, headers=headers, json=payload)
-    try:
-        c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
-                  (to, message, "outgoing", datetime.datetime.now().isoformat()))
-        conn.commit()
-    except Exception as e:
-        print("DB error:", e)
-    return redirect(url_for("chat", contact=to))
-
-@app.route("/new", methods=["POST"])
-def new():
-    number = normalize_number(request.form.get("new_number"))
-    return redirect(url_for("chat", contact=number))
-
-def normalize_number(number):
-    return re.sub(r"[^0-9]", "", number or "")
-
-if __name__ == '__main__':
-    app.run(debug=True)
+if __name__ == "__main__":
+    threading.Thread(target=refresh_token_every_45_days, daemon=True).start()
+    app.run(debug=True, port=5000)
