@@ -10,6 +10,7 @@ app = Flask(__name__)
 ACCESS_TOKEN = "EAAJdUdTsbTMBOzgkdZB734ptYZB93AlL9ZAZAgEqZAUF3LVuIxvNgk9T4n2ex0uIwoVt0Bzl6NM2Cmz148GWOMiceKrvU7sAhGB3eonDSZA1NvPBHAZB1Y7ZBWZCnDATQHyi5cfRvWDWFPuO4ZBMSeDRsWo54st2CIf3FkZBUhHB03UBs8n9B9aAxpAiykzlzU2IzdHFGTCKcSucNNkDlsh0lB4V9BPdQK4NVrFQZAF6HNrUD4SAdRJZAOokZD"
 PHONE_NUMBER_ID = "653311211196519"
 VERIFY_TOKEN = "your_custom_verify_token"
+
 def normalize_number(number):
     return re.sub(r'\D', '', number)
 
@@ -36,10 +37,11 @@ def webhook():
 
     if request.method == "POST":
         data = request.get_json()
+        print("💬 Incoming Webhook JSON:", json.dumps(data, indent=2))
         try:
-            entry = data["entry"][0]
-            changes = entry["changes"][0]
-            value = changes["value"]
+            entry = data.get("entry", [])[0]
+            changes = entry.get("changes", [])[0]
+            value = changes.get("value", {})
             messages = value.get("messages")
 
             if messages:
@@ -49,14 +51,17 @@ def webhook():
                 text = msg.get("text", {}).get("body", "")
                 timestamp = datetime.datetime.now().isoformat()
 
-                c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
-                          (sender, text, "incoming", timestamp))
-                conn.commit()
-
-                print(f"📩 Message from {sender_raw} normalized to {sender}: {text}")
-                print(f"[DB] Inserted: {sender} → {text}")
+                if sender and text:
+                    c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
+                              (sender, text, "incoming", timestamp))
+                    conn.commit()
+                    print(f"✅ DB insert done: {sender} → {text}")
+                else:
+                    print("⚠️ Message missing sender or text. Not inserted.")
+            else:
+                print("⚠️ No messages key in webhook payload.")
         except Exception as e:
-            print("Error in processing message:", e)
+            print("❌ Error in processing webhook message:", str(e))
 
         return "OK", 200
 
