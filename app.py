@@ -62,8 +62,11 @@ def chat():
     contacts = [row[0] for row in c.fetchall()]
     selected = request.args.get("contact") or (contacts[0] if contacts else "")
 
-    c.execute("SELECT sender, message, direction, timestamp FROM messages WHERE sender=? ORDER BY id ASC", (selected,))
-    messages = c.fetchall()
+    if selected:
+        c.execute("SELECT sender, message, direction, timestamp FROM messages WHERE sender=? ORDER BY id ASC", (selected,))
+        messages = c.fetchall()
+    else:
+        messages = []
 
     chat_template = """
     <!DOCTYPE html>
@@ -81,6 +84,7 @@ def chat():
             form { display: flex; margin-top: 20px; }
             input[name=message] { flex: 1; padding: 10px; font-size: 16px; }
             button { padding: 10px 20px; }
+            .newchat-form { margin-top: 20px; }
         </style>
     </head>
     <body>
@@ -91,27 +95,47 @@ def chat():
                     <a href="/chat?contact={{ contact }}">{{ contact }}</a>
                 </div>
             {% endfor %}
+            <div class="newchat-form">
+                <form method="POST" action="/new">
+                    <input name="new_number" placeholder="91XXXXXXXXXX" required />
+                    <button type="submit">New Chat</button>
+                </form>
+            </div>
         </div>
         <div class="content">
-            <h3>Chat with {{ selected }}</h3>
-            <div>
-                {% for sender, msg, direction, time in messages %}
-                    <div class="message {{ direction }}">
-                        <strong>{{ 'You' if direction == 'outgoing' else sender }}:</strong> {{ msg }}<br>
-                        <small>{{ time }}</small>
-                    </div>
-                {% endfor %}
-            </div>
-            <form method="POST" action="/send">
-                <input type="hidden" name="to" value="{{ selected }}" />
-                <input name="message" placeholder="Your message" required />
-                <button type="submit">Send</button>
-            </form>
+            {% if selected %}
+                <h3>Chat with {{ selected }}</h3>
+                <div>
+                    {% for sender, msg, direction, time in messages %}
+                        <div class="message {{ direction }}">
+                            <strong>{{ 'You' if direction == 'outgoing' else sender }}:</strong> {{ msg }}<br>
+                            <small>{{ time }}</small>
+                        </div>
+                    {% endfor %}
+                </div>
+                <form method="POST" action="/send">
+                    <input type="hidden" name="to" value="{{ selected }}" />
+                    <input name="message" placeholder="Your message" required />
+                    <button type="submit">Send</button>
+                </form>
+            {% else %}
+                <p>No conversation selected</p>
+            {% endif %}
         </div>
     </body>
     </html>
     """
     return render_template_string(chat_template, contacts=contacts, selected=selected, messages=messages)
+
+@app.route("/new", methods=["POST"])
+def new_chat():
+    number = request.form.get("new_number")
+    timestamp = datetime.datetime.now().isoformat()
+    # Insert a dummy outgoing message to start the thread
+    c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
+              (number, "", "outgoing", timestamp))
+    conn.commit()
+    return redirect(url_for("chat", contact=number))
 
 @app.route("/send", methods=["POST"])
 def send_message():
