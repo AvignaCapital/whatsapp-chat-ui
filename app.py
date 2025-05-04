@@ -11,6 +11,12 @@ ACCESS_TOKEN = "EAAJdUdTsbTMBOzFEZBbD4R1xsGqH7biklZAxobdvY5UsytnMlDbnRA4pCZA7mYo
 PHONE_NUMBER_ID = "653311211196519"
 VERIFY_TOKEN = "your_custom_verify_token"
 
+app = Flask(__name__)
+
+ACCESS_TOKEN = "<YOUR_LONG_LIVED_ACCESS_TOKEN>"
+PHONE_NUMBER_ID = "<YOUR_PHONE_NUMBER_ID>"
+VERIFY_TOKEN = "your_custom_verify_token"
+
 def normalize_number(number):
     return re.sub(r'\D', '', number)
 
@@ -45,7 +51,8 @@ def webhook():
 
             if messages:
                 msg = messages[0]
-                sender = normalize_number(msg.get("from"))
+                sender_raw = msg.get("from")
+                sender = normalize_number(sender_raw)
                 text = msg.get("text", {}).get("body", "")
                 timestamp = datetime.datetime.now().isoformat()
 
@@ -53,7 +60,8 @@ def webhook():
                           (sender, text, "incoming", timestamp))
                 conn.commit()
 
-                print(f"📩 Message from {sender}: {text}")
+                print(f"📩 Message from {sender_raw} normalized to {sender}: {text}")
+                print(f"[DB] Inserted: {sender} → {text}")
         except Exception as e:
             print("Error in processing message:", e)
 
@@ -151,7 +159,6 @@ def send_message():
         "Content-Type": "application/json"
     }
 
-    # Try sending plain text message first
     payload = {
         "messaging_product": "whatsapp",
         "to": to,
@@ -161,7 +168,6 @@ def send_message():
 
     response = requests.post(url, headers=headers, json=payload)
 
-    # If not delivered, fallback to template
     if response.status_code != 200:
         print("Text message failed, falling back to template")
         template_payload = {
@@ -182,6 +188,12 @@ def send_message():
     conn.commit()
 
     return redirect(url_for("chat", contact=to))
+
+@app.route("/debug-senders")
+def debug_senders():
+    c.execute("SELECT DISTINCT sender FROM messages ORDER BY sender")
+    rows = c.fetchall()
+    return "<br>".join([f"{i+1}. {row[0]}" for i, row in enumerate(rows)])
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
