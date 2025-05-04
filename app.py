@@ -11,12 +11,6 @@ ACCESS_TOKEN = "EAAJdUdTsbTMBOzFEZBbD4R1xsGqH7biklZAxobdvY5UsytnMlDbnRA4pCZA7mYo
 PHONE_NUMBER_ID = "653311211196519"
 VERIFY_TOKEN = "your_custom_verify_token"
 
-app = Flask(__name__)
-
-ACCESS_TOKEN = "<YOUR_LONG_LIVED_ACCESS_TOKEN>"
-PHONE_NUMBER_ID = "<YOUR_PHONE_NUMBER_ID>"
-VERIFY_TOKEN = "your_custom_verify_token"
-
 def normalize_number(number):
     return re.sub(r'\D', '', number)
 
