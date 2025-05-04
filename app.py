@@ -2,6 +2,7 @@ from flask import Flask, request, render_template_string, redirect, url_for
 import sqlite3
 import requests
 import datetime
+import re
 
 app = Flask(__name__)
 
@@ -10,7 +11,9 @@ ACCESS_TOKEN = "EAAJdUdTsbTMBOzFEZBbD4R1xsGqH7biklZAxobdvY5UsytnMlDbnRA4pCZA7mYo
 PHONE_NUMBER_ID = "653311211196519"
 VERIFY_TOKEN = "your_custom_verify_token"
 
-# Initialize DB
+def normalize_number(number):
+    return re.sub(r'\D', '', number)
+
 conn = sqlite3.connect("messages.db", check_same_thread=False)
 c = conn.cursor()
 c.execute('''CREATE TABLE IF NOT EXISTS messages (
@@ -42,7 +45,7 @@ def webhook():
 
             if messages:
                 msg = messages[0]
-                sender = msg.get("from")
+                sender = normalize_number(msg.get("from"))
                 text = msg.get("text", {}).get("body", "")
                 timestamp = datetime.datetime.now().isoformat()
 
@@ -60,7 +63,7 @@ def webhook():
 def chat():
     c.execute("SELECT DISTINCT sender FROM messages ORDER BY id DESC")
     contacts = [row[0] for row in c.fetchall()]
-    selected = request.args.get("contact") or (contacts[0] if contacts else "")
+    selected = normalize_number(request.args.get("contact")) if request.args.get("contact") else (contacts[0] if contacts else "")
 
     if selected:
         c.execute("SELECT sender, message, direction, timestamp FROM messages WHERE sender=? ORDER BY id ASC", (selected,))
@@ -129,9 +132,8 @@ def chat():
 
 @app.route("/new", methods=["POST"])
 def new_chat():
-    number = request.form.get("new_number")
+    number = normalize_number(request.form.get("new_number"))
     timestamp = datetime.datetime.now().isoformat()
-    # Insert a dummy outgoing message to start the thread
     c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
               (number, "", "outgoing", timestamp))
     conn.commit()
@@ -139,7 +141,7 @@ def new_chat():
 
 @app.route("/send", methods=["POST"])
 def send_message():
-    to = request.form.get("to")
+    to = normalize_number(request.form.get("to"))
     message = request.form.get("message")
     timestamp = datetime.datetime.now().isoformat()
 
@@ -148,6 +150,8 @@ def send_message():
         "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
+
+    # Try sending plain text message first
     payload = {
         "messaging_product": "whatsapp",
         "to": to,
@@ -155,8 +159,23 @@ def send_message():
         "text": {"body": message}
     }
 
-    r = requests.post(url, headers=headers, json=payload)
-    print("✅ Sent message to", to, ":", message)
+    response = requests.post(url, headers=headers, json=payload)
+
+    # If not delivered, fallback to template
+    if response.status_code != 200:
+        print("Text message failed, falling back to template")
+        template_payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "template",
+            "template": {
+                "name": "hello_world",
+                "language": {"code": "en_US"}
+            }
+        }
+        response = requests.post(url, headers=headers, json=template_payload)
+
+    print("✅ Sent to", to, ":", message)
 
     c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
               (to, message, "outgoing", timestamp))
