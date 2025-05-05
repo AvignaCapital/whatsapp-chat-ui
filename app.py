@@ -141,29 +141,31 @@ def chat():
             {% endif %}
         </div>
         <script>
-        window.addEventListener("DOMContentLoaded", () => {
-            setInterval(async () => {
-                console.log("Polling for", "{{ selected }}");
-                try {
-                    const res = await fetch(`/messages?contact={{ selected }}`);
-                    console.log("Fetch status:", res.status);
-                    const data = await res.json();
-                    console.log("Fetched:", data);
-                    const box = document.getElementById("chatbox");
-                    box.innerHTML = "";
-                    data.forEach(m => {
-                        const div = document.createElement("div");
-                        div.className = `message ${m.direction}`;
-                        div.innerHTML = `<strong>${m.direction==='outgoing'?'You':m.from}:</strong> ${m.text}<br><small>${m.timestamp}</small>`;
-                        box.appendChild(div);
-                    });
-                    box.scrollTop = box.scrollHeight;
-                } catch (err) {
-                    console.error("Polling error:", err);
-                }
-            }, 3000);
+async function pollMessages() {
+    console.log("Polling for {{ selected }}");
+    try {
+        const res = await fetch(`/messages?contact={{ selected }}`);
+        console.log("Fetch status:", res.status);
+        const data = await res.json();
+        console.log("Fetched:", data);
+        const box = document.getElementById("chatbox");
+        box.innerHTML = "";
+        data.forEach(m => {
+            const div = document.createElement("div");
+            div.className = `message ${m.direction}`;
+            div.innerHTML = `<strong>${m.direction==='outgoing'?'You':m.from}:</strong> ${m.text}<br><small>${m.timestamp}</small>`;
+            box.appendChild(div);
         });
-        </script>
+        box.scrollTop = box.scrollHeight;
+    } catch (err) {
+        console.error("Polling error:", err);
+    }
+}
+// initial fetch
+pollMessages();
+// then every 3 seconds
+setInterval(pollMessages, 3000);
+</script>
     </body>
     </html>
     """
