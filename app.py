@@ -117,31 +117,22 @@ def chat():
         <style>
             body { font-family: Arial; display: flex; height: 100vh; margin: 0; }
             .sidebar { width: 30%; background: #f1f1f1; padding: 20px; overflow-y: auto; border-right: 1px solid #ccc; }
-            .content { width: 70%; padding: 20px; }
-            .contact { padding: 10px; border-bottom: 1px solid #ddd; }
+            .content { width: 70%; padding: 20px; overflow-y: auto; }
             .message { margin: 10px 0; }
             .incoming { color: #000; }
             .outgoing { color: green; text-align: right; }
-            form { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
-            input, select { padding: 10px; font-size: 16px; }
-            button { padding: 10px 20px; }
-            .newchat-form { margin-top: 20px; }
         </style>
     </head>
     <body>
         <div class="sidebar">
             <h3>📱 Conversations</h3>
             {% for contact in contacts %}
-                <div class="contact">
-                    <a href="/chat?contact={{ contact }}">{{ contact }}</a>
-                </div>
+                <div><a href="/chat?contact={{ contact }}">{{ contact }}</a></div>
             {% endfor %}
-            <div class="newchat-form">
-                <form method="POST" action="/new">
-                    <input name="new_number" placeholder="91XXXXXXXXXX" required />
-                    <button type="submit">New Chat</button>
-                </form>
-            </div>
+            <form method="POST" action="/new">
+                <input name="new_number" placeholder="91XXXXXXXXXX" required />
+                <button type="submit">New Chat</button>
+            </form>
         </div>
         <div class="content">
             {% if selected %}
@@ -149,7 +140,7 @@ def chat():
                 <div id="chatbox">
                     {% for sender, msg, direction, time in messages %}
                         <div class="message {{ direction }}">
-                            <strong>{{ 'You' if direction == 'outgoing' else sender }}:</strong> {{ msg }}<br>
+                            <strong>{{ 'You' if direction=='outgoing' else sender }}:</strong> {{ msg }}<br>
                             <small>{{ time }}</small>
                         </div>
                     {% endfor %}
@@ -167,25 +158,29 @@ def chat():
                 <p>No conversation selected</p>
             {% endif %}
         </div>
+    
         <script>
-        async function pollMessages() {
-            const res = await fetch(`/messages?contact={{ selected }}`);
-            const data = await res.json();
-            const box = document.getElementById("chatbox");
-            box.innerHTML = "";
-            data.forEach(m => {
-                const div = document.createElement("div");
-                div.className = `message ${m.direction}`;
-                div.innerHTML = `<strong>${m.direction === 'outgoing' ? 'You' : m.from}:</strong> ${m.text}<br><small>${m.timestamp}</small>`;
-                box.appendChild(div);
-            });
-            box.scrollTop = box.scrollHeight;
-        }
-        setInterval(pollMessages, 3000);
+        window.addEventListener('DOMContentLoaded', () => {
+            setInterval(async () => {
+                alert('Polling...');
+                const res = await fetch(`/messages?contact={{ selected }}`);
+                const data = await res.json();
+                const box = document.getElementById('chatbox');
+                box.innerHTML = '';
+                data.forEach(m => {
+                    const div = document.createElement('div');
+                    div.className = `message ${m.direction}`;
+                    div.innerHTML = `<strong>${m.direction==='outgoing'?'You':m.from}:</strong> ${m.text}<br><small>${m.timestamp}</small>`;
+                    box.appendChild(div);
+                });
+                box.scrollTop = box.scrollHeight;
+            }, 3000);
+        });
         </script>
     </body>
     </html>
     """
+
     return render_template_string(chat_template, contacts=contacts, selected=selected, messages=messages)
 
 @app.route("/new", methods=["POST"])
