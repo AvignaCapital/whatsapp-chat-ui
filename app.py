@@ -179,7 +179,7 @@ def new_chat():
     ts = datetime.datetime.now().isoformat()
     c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?,?,?,?)", (num, "", "outgoing", ts))
     conn.commit()
-    return redirect(url_for("chat", contact=to)))
+    return redirect(url_for("chat", contact=to))
 
 @app.route("/send", methods=["POST"])
 def send_message():
