@@ -11,11 +11,15 @@ import time
 app = Flask(__name__)
 
 def get_token():
+    # Try file first
     try:
-        with open("token.txt", "r") as f:
-            return f.read().strip()
-    except:
-        return os.environ.get("FB_SHORT_TOKEN")
+        val = open("token.txt", "r").read().strip()
+        print("⚙️ get_token(): using token.txt →", val[:10] + "…")
+        return val
+    except FileNotFoundError:
+        val = os.environ.get("FB_SHORT_TOKEN", "")
+        print("⚙️ get_token(): using FB_SHORT_TOKEN →", val[:10] + "…")
+        return val
 
 ACCESS_TOKEN = get_token()
 PHONE_NUMBER_ID = "653311211196519"
