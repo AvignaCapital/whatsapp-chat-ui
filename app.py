@@ -11,37 +11,17 @@ import time
 app = Flask(__name__)
 
 def get_token():
-    # Try file first
     try:
         val = open("token.txt", "r").read().strip()
         print("⚙️ get_token(): using token.txt →", val[:10] + "…")
         return val
-    except FileNotFoundError:
+    except Exception:
         val = os.environ.get("FB_SHORT_TOKEN", "")
-        print("⚙️ get_token(): using FB_SHORT_TOKEN →", val[:10] + "…")
+        print("⚙️ get_token(): fallback to FB_SHORT_TOKEN →", val[:10] + "…")
         return val
 
-ACCESS_TOKEN = get_token()
 PHONE_NUMBER_ID = "653311211196519"
 VERIFY_TOKEN = "your_custom_verify_token"
-
-# Refresh token every 45 days
-
-def refresh_token_every_45_days():
-    while True:
-        try:
-            url = f"https://graph.facebook.com/v19.0/oauth/access_token?grant_type=fb_exchange_token&client_id={os.environ['FB_APP_ID']}&client_secret={os.environ['FB_APP_SECRET']}&fb_exchange_token={os.environ['FB_SHORT_TOKEN']}"
-            response = requests.get(url)
-            data = response.json()
-            if 'access_token' in data:
-                with open("token.txt", "w") as f:
-                    f.write(data["access_token"])
-                print("🔁 Refreshed access token.")
-            else:
-                print("❌ Failed to refresh token:", data)
-        except Exception as e:
-            print("❌ Exception during token refresh:", str(e))
-        time.sleep(45 * 24 * 60 * 60)
 
 conn = sqlite3.connect("messages.db", check_same_thread=False)
 c = conn.cursor()
@@ -64,51 +44,46 @@ def webhook():
             return challenge, 200
         return "Verification failed", 403
 
-    if request.method == "POST":
-        data = request.get_json()
-        print("💬 Incoming Webhook JSON:", json.dumps(data, indent=2))
-        try:
-            entry = data.get("entry", [])[0]
-            changes = entry.get("changes", [])[0]
-            value = changes.get("value", {})
-            messages = value.get("messages")
-
-            if messages:
-                msg = messages[0]
-                sender_raw = msg.get("from")
-                sender = normalize_number(sender_raw)
-                text = msg.get("text", {}).get("body", "")
-                timestamp = datetime.datetime.now().isoformat()
-
-                if sender and text:
-                    c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
-                              (sender, text, "incoming", timestamp))
-                    conn.commit()
-                    print(f"✅ DB insert done: {sender} → {text}")
-                else:
-                    print("⚠️ Message missing sender or text. Not inserted.")
+    data = request.get_json()
+    print("💬 Incoming Webhook JSON:", json.dumps(data, indent=2))
+    try:
+        entry = data.get("entry", [])[0]
+        changes = entry.get("changes", [])[0]
+        value = changes.get("value", {})
+        messages = value.get("messages")
+        if messages:
+            msg = messages[0]
+            sender = normalize_number(msg.get("from"))
+            text = msg.get("text", {}).get("body", "")
+            ts = datetime.datetime.now().isoformat()
+            if sender and text:
+                c.execute(
+                    "INSERT INTO messages (sender, message, direction, timestamp) VALUES (?,?,?,?)",
+                    (sender, text, "incoming", ts)
+                )
+                conn.commit()
+                print(f"✅ DB insert done: {sender} → {text}")
             else:
-                print("⚠️ No messages key in webhook payload.")
-        except Exception as e:
-            print("❌ Error in processing webhook message:", str(e))
-
-        return "OK", 200
-
-def normalize_number(number):
-    return re.sub(r'\D', '', number)
+                print("⚠️ Message missing sender or text. Not inserted.")
+        else:
+            print("⚠️ No messages key in webhook payload.")
+    except Exception as e:
+        print("❌ Error in processing webhook message:", e)
+    return "OK", 200
 
 @app.route("/chat")
 def chat():
     c.execute("SELECT DISTINCT sender FROM messages ORDER BY id DESC")
-    contacts = [row[0] for row in c.fetchall()]
+    contacts = [r[0] for r in c.fetchall()]
     selected = normalize_number(request.args.get("contact")) if request.args.get("contact") else (contacts[0] if contacts else "")
-
     if selected:
-        c.execute("SELECT sender, message, direction, timestamp FROM messages WHERE sender=? ORDER BY id ASC", (selected,))
+        c.execute(
+            "SELECT sender, message, direction, timestamp FROM messages WHERE sender=? ORDER BY id ASC",
+            (selected,)
+        )
         messages = c.fetchall()
     else:
         messages = []
-
     chat_template = """
     <!DOCTYPE html>
     <html>
@@ -131,8 +106,8 @@ def chat():
     <body>
         <div class="sidebar">
             <h3>📱 Conversations</h3>
-            {% for contact in contacts %}
-                <div class="contact"><a href="/chat?contact={{ contact }}">{{ contact }}</a></div>
+            {% for ctc in contacts %}
+                <div class="contact"><a href="/chat?contact={{ ctc }}">{{ ctc }}</a></div>
             {% endfor %}
             <div class="newchat-form">
                 <form method="POST" action="/new">
@@ -145,10 +120,10 @@ def chat():
             {% if selected %}
                 <h3>Chat with {{ selected }}</h3>
                 <div id="chatbox">
-                    {% for sender, msg, direction, time in messages %}
-                        <div class="message {{ direction }}">
-                            <strong>{{ 'You' if direction == 'outgoing' else sender }}:</strong> {{ msg }}<br>
-                            <small>{{ time }}</small>
+                    {% for s, m, d, t in messages %}
+                        <div class="message {{ d }}">
+                            <strong>{{ 'You' if d=='outgoing' else s }}:</strong> {{ m }}<br>
+                            <small>{{ t }}</small>
                         </div>
                     {% endfor %}
                 </div>
@@ -165,10 +140,9 @@ def chat():
                 <p>No conversation selected</p>
             {% endif %}
         </div>
-    
         <script>
         window.addEventListener("DOMContentLoaded", () => {
-            async function pollMessages() {
+            setInterval(async () => {
                 console.log("Polling for", "{{ selected }}");
                 try {
                     const res = await fetch(`/messages?contact={{ selected }}`);
@@ -180,98 +154,57 @@ def chat():
                     data.forEach(m => {
                         const div = document.createElement("div");
                         div.className = `message ${m.direction}`;
-                        div.innerHTML = `<strong>${m.direction === 'outgoing' ? 'You' : m.from}:</strong> ${m.text}<br><small>${m.timestamp}</small>`;
+                        div.innerHTML = `<strong>${m.direction==='outgoing'?'You':m.from}:</strong> ${m.text}<br><small>${m.timestamp}</small>`;
                         box.appendChild(div);
                     });
                     box.scrollTop = box.scrollHeight;
                 } catch (err) {
                     console.error("Polling error:", err);
                 }
-            }
-            setInterval(pollMessages, 3000);
+            }, 3000);
         });
         </script>
     </body>
     </html>
     """
-
     return render_template_string(chat_template, contacts=contacts, selected=selected, messages=messages)
 
 @app.route("/new", methods=["POST"])
 def new_chat():
-    number = normalize_number(request.form.get("new_number"))
-    timestamp = datetime.datetime.now().isoformat()
-    c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
-              (number, "", "outgoing", timestamp))
+    num = normalize_number(request.form.get("new_number"))
+    ts = datetime.datetime.now().isoformat()
+    c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?,?,?,?)", (num, "", "outgoing", ts))
     conn.commit()
-    return redirect(url_for("chat", contact=number))
+    return redirect(url_for("chat", contact=num))
 
 @app.route("/send", methods=["POST"])
 def send_message():
     to = normalize_number(request.form.get("to"))
     message = request.form.get("message")
     mode = request.form.get("mode")
-    timestamp = datetime.datetime.now().isoformat()
-
-    # Always fetch the latest token
+    ts = datetime.datetime.now().isoformat()
     token = get_token()
     url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-
-    # Build payload
-    if mode == "template":
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": to,
-            "type": "template",
-            "template": {
-                "name": "hello_world",
-                "language": {"code": "en_US"}
-            }
-        }
+    headers = {"Authorization":f"Bearer {token}","Content-Type":"application/json"}
+    if mode=="template":
+        payload={"messaging_product":"whatsapp","to":to,"type":"template","template":{"name":"hello_world","language":{"code":"en_US"}}}
     else:
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": to,
-            "type": "text",
-            "text": {"body": message}
-        }
-
-    # First attempt
-    response = requests.post(url, headers=headers, json=payload)
-
-    # If token expired (OAuthException 190), refresh and retry once
-    if response.status_code == 400 and '"code":190' in response.text:
-        exch = requests.get(
-            f"https://graph.facebook.com/v19.0/oauth/access_token"
-            f"?grant_type=fb_exchange_token"
-            f"&client_id={os.environ['FB_APP_ID']}"
-            f"&client_secret={os.environ['FB_APP_SECRET']}"
-            f"&fb_exchange_token={token}"
-        ).json()
-        if "access_token" in exch:
-            with open("token.txt", "w") as f:
-                f.write(exch["access_token"])
-            token = exch["access_token"]
-            headers["Authorization"] = f"Bearer {token}"
-            response = requests.post(url, headers=headers, json=payload)
-
-    print("Meta API response:", response.text)
-
-    # Store outgoing in DB
-    c.execute(
-        "INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
-        (to, message, "outgoing", timestamp)
-    )
+        payload={"messaging_product":"whatsapp","to":to,"type":"text","text":{"body":message}}
+    resp = requests.post(url, headers=headers, json=payload)
+    if resp.status_code==400 and '"code":190' in resp.text:
+        exch = requests.get(f"https://graph.facebook.com/v19.0/oauth/access_token?grant_type=fb_exchange_token&client_id={os.environ['FB_APP_ID']}&client_secret={os.environ['FB_APP_SECRET']}&fb_exchange_token={token}").json()
+        print("🔄 Token exchange response:", exch)
+        if 'access_token' in exch:
+            open("token.txt","w").write(exch['access_token'])
+            token=exch['access_token']
+            headers['Authorization']=f"Bearer {token}"
+            resp = requests.post(url, headers=headers, json=payload)
+    print("Meta API response:", resp.text)
+    c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?,?,?,?)", (to, message, "outgoing", ts))
     conn.commit()
-
     return redirect(url_for("chat", contact=to))
 
-# preserve the rest of the file
+def normalize_number(n): return re.sub(r'\D','',n or '')
 
 if __name__ == "__main__":
-    threading.Thread(target=refresh_token_every_45_days, daemon=True).start()
     app.run(debug=True, port=5000)
