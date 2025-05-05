@@ -118,21 +118,28 @@ def chat():
             body { font-family: Arial; display: flex; height: 100vh; margin: 0; }
             .sidebar { width: 30%; background: #f1f1f1; padding: 20px; overflow-y: auto; border-right: 1px solid #ccc; }
             .content { width: 70%; padding: 20px; overflow-y: auto; }
+            .contact { padding: 10px; border-bottom: 1px solid #ddd; }
             .message { margin: 10px 0; }
             .incoming { color: #000; }
             .outgoing { color: green; text-align: right; }
+            form { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+            input, select { padding: 10px; font-size: 16px; }
+            button { padding: 10px 20px; }
+            .newchat-form { margin-top: 20px; }
         </style>
     </head>
     <body>
         <div class="sidebar">
             <h3>📱 Conversations</h3>
             {% for contact in contacts %}
-                <div><a href="/chat?contact={{ contact }}">{{ contact }}</a></div>
+                <div class="contact"><a href="/chat?contact={{ contact }}">{{ contact }}</a></div>
             {% endfor %}
-            <form method="POST" action="/new">
-                <input name="new_number" placeholder="91XXXXXXXXXX" required />
-                <button type="submit">New Chat</button>
-            </form>
+            <div class="newchat-form">
+                <form method="POST" action="/new">
+                    <input name="new_number" placeholder="91XXXXXXXXXX" required />
+                    <button type="submit">New Chat</button>
+                </form>
+            </div>
         </div>
         <div class="content">
             {% if selected %}
@@ -140,7 +147,7 @@ def chat():
                 <div id="chatbox">
                     {% for sender, msg, direction, time in messages %}
                         <div class="message {{ direction }}">
-                            <strong>{{ 'You' if direction=='outgoing' else sender }}:</strong> {{ msg }}<br>
+                            <strong>{{ 'You' if direction == 'outgoing' else sender }}:</strong> {{ msg }}<br>
                             <small>{{ time }}</small>
                         </div>
                     {% endfor %}
@@ -160,21 +167,28 @@ def chat():
         </div>
     
         <script>
-        window.addEventListener('DOMContentLoaded', () => {
-            setInterval(async () => {
-                alert('Polling...');
-                const res = await fetch(`/messages?contact={{ selected }}`);
-                const data = await res.json();
-                const box = document.getElementById('chatbox');
-                box.innerHTML = '';
-                data.forEach(m => {
-                    const div = document.createElement('div');
-                    div.className = `message ${m.direction}`;
-                    div.innerHTML = `<strong>${m.direction==='outgoing'?'You':m.from}:</strong> ${m.text}<br><small>${m.timestamp}</small>`;
-                    box.appendChild(div);
-                });
-                box.scrollTop = box.scrollHeight;
-            }, 3000);
+        window.addEventListener("DOMContentLoaded", () => {
+            async function pollMessages() {
+                console.log("Polling for", "{{ selected }}");
+                try {
+                    const res = await fetch(`/messages?contact={{ selected }}`);
+                    console.log("Fetch status:", res.status);
+                    const data = await res.json();
+                    console.log("Fetched:", data);
+                    const box = document.getElementById("chatbox");
+                    box.innerHTML = "";
+                    data.forEach(m => {
+                        const div = document.createElement("div");
+                        div.className = `message ${m.direction}`;
+                        div.innerHTML = `<strong>${m.direction === 'outgoing' ? 'You' : m.from}:</strong> ${m.text}<br><small>${m.timestamp}</small>`;
+                        box.appendChild(div);
+                    });
+                    box.scrollTop = box.scrollHeight;
+                } catch (err) {
+                    console.error("Polling error:", err);
+                }
+            }
+            setInterval(pollMessages, 3000);
         });
         </script>
     </body>
