@@ -187,26 +187,64 @@ def send_message():
     message = request.form.get("message")
     mode = request.form.get("mode")
     ts = datetime.datetime.now().isoformat()
+
+    # Always fetch the latest token
     token = get_token()
     url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization":f"Bearer {token}","Content-Type":"application/json"}
-    if mode=="template":
-        payload={"messaging_product":"whatsapp","to":to,"type":"template","template":{"name":"hello_world","language":{"code":"en_US"}}}
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    # Build payload
+    if mode == "template":
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "template",
+            "template": {"name": "hello_world", "language": {"code": "en_US"}}
+        }
     else:
-        payload={"messaging_product":"whatsapp","to":to,"type":"text","text":{"body":message}}
+        payload = {"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": message}}
+
+    # Send initial request
     resp = requests.post(url, headers=headers, json=payload)
-    if resp.status_code==400 and '"code":190' in resp.text:
-        exch = requests.get(f"https://graph.facebook.com/v19.0/oauth/access_token?grant_type=fb_exchange_token&client_id={os.environ['FB_APP_ID']}&client_secret={os.environ['FB_APP_SECRET']}&fb_exchange_token={token}").json()
-        print("🔄 Token exchange response:", exch)
-        if 'access_token' in exch:
-            open("token.txt","w").write(exch['access_token'])
-            token=exch['access_token']
-            headers['Authorization']=f"Bearer {token}"
-            resp = requests.post(url, headers=headers, json=payload)
+
+    # If token expired (OAuthException 190), attempt exchange and retry
+    if resp.status_code == 400 and '"code":190' in resp.text:
+        # Try up to 3 times for transient errors
+        for attempt in range(3):
+            exch = requests.get(
+                "https://graph.facebook.com/v19.0/oauth/access_token"
+                f"?grant_type=fb_exchange_token"
+                f"&client_id={os.environ['FB_APP_ID']}"
+                f"&client_secret={os.environ['FB_APP_SECRET']}"
+                f"&fb_exchange_token={token}"
+            ).json()
+            print("🔄 Token exchange response:", exch)
+            if "access_token" in exch:
+                # Success: write new token and retry send
+                with open("token.txt", "w") as f:
+                    f.write(exch["access_token"])
+                token = exch["access_token"]
+                headers["Authorization"] = f"Bearer {token}"
+                resp = requests.post(url, headers=headers, json=payload)
+                break
+            # If transient error, wait and retry
+            error = exch.get("error", {})
+            if error.get("is_transient"):
+                time.sleep(1)
+                continue
+            # Non-transient or missing: stop retrying
+            break
+
     print("Meta API response:", resp.text)
-    c.execute("INSERT INTO messages (sender, message, direction, timestamp) VALUES (?,?,?,?)", (to, message, "outgoing", ts))
+
+    # Store outgoing in DB
+    c.execute(
+        "INSERT INTO messages (sender, message, direction, timestamp) VALUES (?, ?, ?, ?)",
+        (to, message, "outgoing", ts)
+    )
     conn.commit()
-    return redirect(url_for("chat", contact=to))
+
+    return redirect(url_for("chat", contact=to))url_for("chat", contact=to))
 
 def normalize_number(n): return re.sub(r'\D','',n or '')
 
